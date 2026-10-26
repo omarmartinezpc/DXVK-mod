@@ -1,0 +1,67 @@
+--- a/src/dxgi/dxgi_swapchain.cpp
++++ b/src/dxgi/dxgi_swapchain.cpp
+@@ -2,7 +2,35 @@
+ #include "dxgi_output.h"
+ #include "dxgi_swapchain.h"
+ 
++#include "../util/config/config.h"
++
+ namespace dxvk {
++
++  /**
++   * \brief Checks whether display mode switches should be skipped
++   *
++   * Enabled with "dxgi.noModeSwitch = True" in dxvk.conf. When set, the
++   * monitor keeps its current resolution when an application enters
++   * fullscreen or requests a new target mode. The game still creates
++   * its back buffer at the requested (lower) resolution and DXVK scales
++   * it up to the window when presenting.
++   */
++  static bool SkipDisplayModeSwitch() {
++    static const bool skip = []() {
++      Config config = Config::getUserConfig();
++      config.merge(Config::getAppConfig(env::getExePath()));
++
++      const bool value = config.getOption<bool>("dxgi.noModeSwitch", false);
++
++      if (value)
++        Logger::info("DXGI: dxgi.noModeSwitch enabled, display mode changes are skipped");
++
++      return value;
++    }();
++
++    return skip;
++  }
++
+   
+   DxgiSwapChain::DxgiSwapChain(
+           IDXGIFactory*               pFactory,
+@@ -366,7 +394,7 @@
+       }
+       
+       // If the swap chain allows it, change the display mode
+-      if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) {
++      if ((m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) && !SkipDisplayModeSwitch()) {
+         ChangeDisplayMode(output.ptr(), pNewTargetParameters);
+         NotifyModeChange(m_monitor, FALSE);
+       }
+@@ -568,7 +596,7 @@
+     // Find a display mode that matches what we need
+     ::GetWindowRect(m_window, &m_windowState.rect);
+     
+-    if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) {
++    if ((m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) && !SkipDisplayModeSwitch()) {
+       DXGI_MODE_DESC displayMode;
+       displayMode.Width            = m_desc.Width;
+       displayMode.Height           = m_desc.Height;
+@@ -728,6 +756,10 @@
+   HRESULT DxgiSwapChain::RestoreDisplayMode(HMONITOR hMonitor) {
+     if (!hMonitor)
+       return DXGI_ERROR_INVALID_CALL;
++
++    // Nothing to restore if we never changed the display mode
++    if (SkipDisplayModeSwitch())
++      return S_OK;
+     
+     return RestoreMonitorDisplayMode()
+       ? S_OK
